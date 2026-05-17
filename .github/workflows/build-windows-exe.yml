@@ -1,0 +1,70 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          if (Test-Path requirements.txt) {
+            pip install -r requirements.txt
+          } else {
+            pip install PySide6 pycaw comtypes pyinstaller
+          }
+
+      - name: Build EXE
+        shell: pwsh
+        run: |
+          if (Test-Path app.spec) {
+            pyinstaller --noconfirm app.spec
+          } elseif (Test-Path audio_switcher.py) {
+            pyinstaller --noconfirm --onefile --windowed --name "audio-switcher" audio_switcher.py
+          } else {
+            Write-Error "No app.spec or audio_switcher.py found."
+          }
+
+      - name: Prepare artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          if (Test-Path "dist\audio-switcher.exe") {
+            Copy-Item "dist\audio-switcher.exe" "out\audio-switcher.exe" -Force
+          } else {
+            Get-ChildItem dist -Filter *.exe -Recurse | Select-Object -First 1 | ForEach-Object {
+              Copy-Item $_.FullName "out\$($_.Name)" -Force
+            }
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: out/*.exe
+          if-no-files-found: error
+
+      - name: Upload to Release (only on release)
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.exe
